@@ -18,14 +18,15 @@ def print_banner():
   print("=" * 60)
 def check_ssl(hostname):
   try:
-    context = ssl.create_default_context()
-    with socket.create_connection((hostname, 443), timeout=5) as sock:
-    with context.wrap_socket(sock, server_hostname=hostname) as ssock:
-    cert = ssock.getpeercert()
-    print("\n[SSL] Certificado válido")
-    print("[SSL] Emisor:", cert.get('issuer'))
+        context = ssl.create_default_context()
+
+        with socket.create_connection((hostname, 443), timeout=5) as sock:
+            with context.wrap_socket(sock, server_hostname=hostname) as ssock:
+                cert = ssock.getpeercert()
+                print("\n[SSL] Certificado válido")
+                print("[SSL] Emisor:", cert.get('issuer'))
   except Exception as e:
-    print("\n[SSL] Error SSL:", e)
+        print("\n[SSL] Error SSL:", e)
 
 
 
@@ -43,7 +44,7 @@ def analyze_cookies(response):
     print("\n[COOKIES]")
     if not response.cookies:
         print("No se detectaron cookies")
-    return
+        return
 
     for cookie in response.cookies:
 
