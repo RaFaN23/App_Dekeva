@@ -28,6 +28,7 @@ def check_ssl(hostname):
     print("\n[SSL] Error SSL:", e)
 
 
+
 def check_headers(headers):
     print("\n[HEADERS DE SEGURIDAD]")
 
@@ -36,3 +37,16 @@ def check_headers(headers):
             print(f"[OK] {header}")
         else:
             print(f"[FALTA] {header}")
+
+def analyze_cookies(response):
+
+    print("\n[COOKIES]")
+    if not response.cookies:
+        print("No se detectaron cookies")
+    return
+
+    for cookie in response.cookies:
+
+        print(f"Cookie: {cookie.name}")
+        print(f" Secure: {cookie.secure}")
+        print(f" HttpOnly: {cookie.has_nonstandard_attr('HttpOnly')}")
