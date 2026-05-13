@@ -78,3 +78,37 @@ def analyze_forms(html):
       print(" [OK] Token CSRF detectado")
     else:
       print(" [ALERTA] No se detectó token CSRF")
+      
+def scan(url):
+    print_banner()
+
+    try:
+        response = requests.get(url, timeout=10)
+
+        print(f"\nURL: {url}")
+        print(f"Estado HTTP: {response.status_code}")
+        print(f"Servidor: {response.headers.get('Server', 'No detectado')}")
+
+        check_headers(response.headers)
+        analyze_cookies(response)
+        analyze_forms(response.text)
+
+        parsed = urlparse(url)
+
+        if parsed.hostname:
+            check_ssl(parsed.hostname)
+
+        print("\nEscaneo finalizado")
+
+    except requests.exceptions.RequestException as e:
+        print("\n[ERROR] No se pudo conectar con el sitio")
+        print(e)
+
+
+if __name__ == '__main__':
+    target = input("Introduce la URL objetivo: ")
+
+    if not target.startswith("http"):
+        target = "https://" + target
+
+    scan(target)
