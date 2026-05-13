@@ -26,3 +26,13 @@ def check_ssl(hostname):
     print("[SSL] Emisor:", cert.get('issuer'))
   except Exception as e:
     print("\n[SSL] Error SSL:", e)
+
+
+def check_headers(headers):
+    print("\n[HEADERS DE SEGURIDAD]")
+
+    for header in SECURITY_HEADERS:
+        if header in headers:
+            print(f"[OK] {header}")
+        else:
+            print(f"[FALTA] {header}")
