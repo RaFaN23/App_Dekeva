@@ -1,115 +1,182 @@
+from flask import Flask, jsonify, request
+from flask_cors import CORS
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 import ssl
 import socket
+import psycopg2
+
+app = Flask(__name__)
+CORS(app)
+
+# =========================
+# POSTGRESQL CONNECTION
+# =========================
+
+def get_conn():
+    return psycopg2.connect(
+        dbname="scanner",
+        user="postgres",
+        password="TU_CONTRASEÑA",
+        host="localhost",
+        port="5432"
+    )
+
+# =========================
+# SECURITY HEADERS
+# =========================
 
 SECURITY_HEADERS = [
-'Content-Security-Policy',
-'Strict-Transport-Security',
-'X-Content-Type-Options',
-'X-Frame-Options',
-'Referrer-Policy'
+    'Content-Security-Policy',
+    'Strict-Transport-Security',
+    'X-Content-Type-Options',
+    'X-Frame-Options',
+    'Referrer-Policy'
 ]
 
-def print_banner():
-  print("=" * 60)
-  print(" WEB SECURITY AUDITOR ")
-  print("=" * 60)
-def check_ssl(hostname):
-  try:
-        context = ssl.create_default_context()
+# =========================
+# SSL CHECK
+# =========================
 
+def check_ssl(hostname):
+    try:
+        context = ssl.create_default_context()
         with socket.create_connection((hostname, 443), timeout=5) as sock:
             with context.wrap_socket(sock, server_hostname=hostname) as ssock:
                 cert = ssock.getpeercert()
-                print("\n[SSL] Certificado válido")
-                print("[SSL] Emisor:", cert.get('issuer'))
-  except Exception as e:
-        print("\n[SSL] Error SSL:", e)
+                return {
+                    "valid": True,
+                    "issuer": str(cert.get('issuer'))
+                }
+    except Exception as e:
+        return {
+            "valid": False,
+            "error": str(e)
+        }
 
-
+# =========================
+# HEADERS ANALYSIS
+# =========================
 
 def check_headers(headers):
-    print("\n[HEADERS DE SEGURIDAD]")
-
+    results = []
     for header in SECURITY_HEADERS:
-        if header in headers:
-            print(f"[OK] {header}")
-        else:
-            print(f"[FALTA] {header}")
+        results.append({
+            "header": header,
+            "status": "OK" if header in headers else "FALTA"
+        })
+    return results
+
+# =========================
+# COOKIES ANALYSIS
+# =========================
 
 def analyze_cookies(response):
-
-    print("\n[COOKIES]")
+    results = []
     if not response.cookies:
-        print("No se detectaron cookies")
-        return
+        return results
 
     for cookie in response.cookies:
+        results.append({
+            "name": cookie.name,
+            "secure": cookie.secure,
+            "httpOnly": cookie.has_nonstandard_attr('HttpOnly')
+        })
+    return results
 
-        print(f"Cookie: {cookie.name}")
-        print(f" Secure: {cookie.secure}")
-        print(f" HttpOnly: {cookie.has_nonstandard_attr('HttpOnly')}")
+# =========================
+# FORMS ANALYSIS
+# =========================
 
 def analyze_forms(html):
+    soup = BeautifulSoup(html, 'html.parser')
+    forms = soup.find_all('form')
+    results = []
 
-  print("\n[FORMULARIOS]")
-  
-  soup = BeautifulSoup(html, 'html.parser')
-  forms = soup.find_all('form')
-  
-  if not forms:
-    print("No se encontraron formularios")
-    return
-  
-  for i, form in enumerate(forms, start=1):
-  
-    csrf_found = False
-  
-    for inp in form.find_all('input'):
-      name = inp.get('name', '').lower()
-    
-      if 'csrf' in name or 'token' in name:
-        csrf_found = True
-  
-    print(f"Formulario #{i}")
-  
-    if csrf_found:
-      print(" [OK] Token CSRF detectado")
-    else:
-      print(" [ALERTA] No se detectó token CSRF")
-      
-def scan(url):
-    print_banner()
+    for i, form in enumerate(forms, start=1):
+        csrf_found = False
+        for inp in form.find_all('input'):
+            name = inp.get('name', '').lower()
+            if 'csrf' in name or 'token' in name:
+                csrf_found = True
 
+        results.append({
+            "form": i,
+            "csrf": csrf_found
+        })
+
+    return results
+
+# =========================
+# SAVE TO DATABASE
+# =========================
+
+def save_scan(url, status_code, server):
     try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO scans (url, status_code, server) VALUES (%s, %s, %s)",
+            (url, status_code, server)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print("Error guardando en PostgreSQL:", e)
+
+# =========================
+# MAIN SCAN
+# =========================
+
+def scan(url):
+    try:
+        print(">>> GUARDANDO EN POSTGRESQL <<<")
+
         response = requests.get(url, timeout=10)
 
-        print(f"\nURL: {url}")
-        print(f"Estado HTTP: {response.status_code}")
-        print(f"Servidor: {response.headers.get('Server', 'No detectado')}")
-
-        check_headers(response.headers)
-        analyze_cookies(response)
-        analyze_forms(response.text)
-
         parsed = urlparse(url)
+        ssl_data = check_ssl(parsed.hostname) if parsed.hostname else None
 
-        if parsed.hostname:
-            check_ssl(parsed.hostname)
+        # Guardar en PostgreSQL
+        save_scan(url, response.status_code, response.headers.get('Server', 'No detectado'))
 
-        print("\nEscaneo finalizado")
+        data = {
+            "url": url,
+            "status_code": response.status_code,
+            "server": response.headers.get('Server', 'No detectado'),
+            "headers": check_headers(response.headers),
+            "cookies": analyze_cookies(response),
+            "forms": analyze_forms(response.text),
+            "ssl": ssl_data
+        }
+
+        return data
 
     except requests.exceptions.RequestException as e:
-        print("\n[ERROR] No se pudo conectar con el sitio")
-        print(e)
+        return {"error": str(e)}
 
+# =========================
+# API ROUTE
+# =========================
+
+@app.route('/scan')
+def web_scan():
+    url = request.args.get('url')
+
+    if not url:
+        return jsonify({"error": "No URL provided"})
+
+    if not url.startswith("http"):
+        url = "https://" + url
+
+    result = scan(url)
+    return jsonify(result)
+
+# =========================
+# RUN SERVER
+# =========================
 
 if __name__ == '__main__':
-    target = input("Introduce la URL objetivo: ")
-
-    if not target.startswith("http"):
-        target = "https://" + target
-
-    scan(target)
+    app.run(debug=True)
