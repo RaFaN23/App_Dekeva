@@ -16,7 +16,7 @@ def get_conn():
     return psycopg2.connect(
         dbname="scanner",
         user="postgres",
-        password="TU_CONTRASEÑA",
+        password="1234",
         host="localhost",
         port="5432"
     )
