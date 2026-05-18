@@ -10,9 +10,7 @@ import psycopg2
 app = Flask(__name__)
 CORS(app)
 
-# =========================
-# POSTGRESQL CONNECTION
-# =========================
+
 
 def get_conn():
     return psycopg2.connect(
@@ -23,9 +21,6 @@ def get_conn():
         port="5432"
     )
 
-# =========================
-# SECURITY HEADERS
-# =========================
 
 SECURITY_HEADERS = [
     'Content-Security-Policy',
@@ -35,9 +30,6 @@ SECURITY_HEADERS = [
     'Referrer-Policy'
 ]
 
-# =========================
-# SSL CHECK
-# =========================
 
 def check_ssl(hostname):
     try:
@@ -55,9 +47,6 @@ def check_ssl(hostname):
             "error": str(e)
         }
 
-# =========================
-# HEADERS ANALYSIS
-# =========================
 
 def check_headers(headers):
     results = []
@@ -68,9 +57,6 @@ def check_headers(headers):
         })
     return results
 
-# =========================
-# COOKIES ANALYSIS
-# =========================
 
 def analyze_cookies(response):
     results = []
@@ -85,9 +71,6 @@ def analyze_cookies(response):
         })
     return results
 
-# =========================
-# FORMS ANALYSIS
-# =========================
 
 def analyze_forms(html):
     soup = BeautifulSoup(html, 'html.parser')
@@ -108,9 +91,6 @@ def analyze_forms(html):
 
     return results
 
-# =========================
-# SAVE TO DATABASE
-# =========================
 
 def save_scan(url, status_code, server):
     try:
@@ -126,9 +106,6 @@ def save_scan(url, status_code, server):
     except Exception as e:
         print("Error guardando en PostgreSQL:", e)
 
-# =========================
-# MAIN SCAN
-# =========================
 
 def scan(url):
     try:
@@ -157,10 +134,6 @@ def scan(url):
     except requests.exceptions.RequestException as e:
         return {"error": str(e)}
 
-# =========================
-# API ROUTE
-# =========================
-
 @app.route('/scan')
 def web_scan():
     url = request.args.get('url')
@@ -174,9 +147,7 @@ def web_scan():
     result = scan(url)
     return jsonify(result)
 
-# =========================
-# RUN SERVER
-# =========================
+
 
 if __name__ == '__main__':
     app.run(debug=True)
