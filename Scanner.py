@@ -6,17 +6,22 @@ from urllib.parse import urlparse
 import ssl
 import socket
 import psycopg2
+import redis
+import json
+from playwright.sync_api import sync_playwright
 
 app = Flask(__name__)
 CORS(app)
 
+
+cache = redis.Redis(host='localhost', port=6379, db=0)
 
 
 def get_conn():
     return psycopg2.connect(
         dbname="scanner",
         user="postgres",
-        password="1234",
+        password="kantero@09",
         host="localhost",
         port="5432"
     )
@@ -47,92 +52,139 @@ def check_ssl(hostname):
             "error": str(e)
         }
 
+HEADER_VULNS = {
+    'Content-Security-Policy': 'Posible XSS y carga de scripts maliciosos',
+    'Strict-Transport-Security': 'Posible downgrade a HTTP inseguro',
+    'X-Content-Type-Options': 'Posible MIME sniffing',
+    'X-Frame-Options': 'Posible Clickjacking',
+    'Referrer-Policy': 'Filtración de información sensible',
+    'Permissions-Policy': 'Abuso de permisos del navegador'
+}
+
 
 def check_headers(headers):
     results = []
-    for header in SECURITY_HEADERS:
-        results.append({
-            "header": header,
-            "status": "OK" if header in headers else "FALTA"
-        })
+
+    for h in SECURITY_HEADERS:
+        exists = h in headers
+
+        if exists:
+            results.append({
+                "header": h,
+                "status": "OK",
+                "message": "Sin vulnerabilidades detectadas"
+            })
+        else:
+            results.append({
+                "header": h,
+                "status": "FALTA",
+                "message": HEADER_VULNS.get(h, "Riesgo desconocido")
+            })
+
     return results
 
 
 def analyze_cookies(response):
     results = []
-    if not response.cookies:
-        return results
 
     for cookie in response.cookies:
         results.append({
             "name": cookie.name,
             "secure": cookie.secure,
-            "httpOnly": cookie.has_nonstandard_attr('HttpOnly')
+            "httpOnly": cookie._rest.get('HttpOnly', False)
         })
+
     return results
 
 
 def analyze_forms(html):
     soup = BeautifulSoup(html, 'html.parser')
+
     forms = soup.find_all('form')
+
     results = []
 
     for i, form in enumerate(forms, start=1):
-        csrf_found = False
-        for inp in form.find_all('input'):
-            name = inp.get('name', '').lower()
-            if 'csrf' in name or 'token' in name:
-                csrf_found = True
+
+        inputs = form.find_all('input')
+
+        csrf_found = any(
+            'csrf' in (inp.get('name') or '').lower() or
+            'token' in (inp.get('name') or '').lower()
+            for inp in inputs
+        )
 
         results.append({
             "form": i,
+            "inputs": len(inputs),
             "csrf": csrf_found
         })
 
     return results
 
 
-def save_scan(url, status_code, server):
+def save_scan(data):
     try:
         conn = get_conn()
         cur = conn.cursor()
         cur.execute(
             "INSERT INTO scans (url, status_code, server) VALUES (%s, %s, %s)",
-            (url, status_code, server)
+            (data["url"], data["status_code"], data["server"])
         )
         conn.commit()
         cur.close()
         conn.close()
+        print(">>> GUARDADO EN POSTGRESQL <<<")
     except Exception as e:
         print("Error guardando en PostgreSQL:", e)
 
 
 def scan(url):
+
+    cached = cache.get(url)
+    if cached:
+        print(">>> RESPUESTA DESDE REDIS <<<")
+        return json.loads(cached.decode())
+
+    print(">>> ESCANEANDO URL (BROWSER MODE) <<<")
+
     try:
-        print(">>> GUARDANDO EN POSTGRESQL <<<")
+        r = requests.get(url, timeout=10)
+        status = r.status_code
+        server = r.headers.get("Server", "Desconocido")
+        headers = check_headers(r.headers)
+    except:
+        status = None
+        server = None
+        headers = None
 
-        response = requests.get(url, timeout=10)
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.goto(url, timeout=10000)
+        html = page.content()
+        cookies = page.context.cookies()
+        browser.close()
 
-        parsed = urlparse(url)
-        ssl_data = check_ssl(parsed.hostname) if parsed.hostname else None
+    parsed = urlparse(url)
+    ssl_data = check_ssl(parsed.hostname)
 
-        # Guardar en PostgreSQL
-        save_scan(url, response.status_code, response.headers.get('Server', 'No detectado'))
+    data = {
+        "url": url,
+        "status_code": status,
+        "server": server,
+        "headers": headers,
+        "cookies": cookies,
+        "forms": analyze_forms(html),
+        "ssl": ssl_data
+    }
 
-        data = {
-            "url": url,
-            "status_code": response.status_code,
-            "server": response.headers.get('Server', 'No detectado'),
-            "headers": check_headers(response.headers),
-            "cookies": analyze_cookies(response),
-            "forms": analyze_forms(response.text),
-            "ssl": ssl_data
-        }
+    cache.setex(url, 60, json.dumps(data))
+    save_scan(data)
 
-        return data
+    return data
 
-    except requests.exceptions.RequestException as e:
-        return {"error": str(e)}
+
 
 @app.route('/scan')
 def web_scan():
@@ -146,7 +198,6 @@ def web_scan():
 
     result = scan(url)
     return jsonify(result)
-
 
 
 if __name__ == '__main__':
