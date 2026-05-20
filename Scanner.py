@@ -19,7 +19,7 @@ cache = redis.Redis(host='localhost', port=6379, db=0)
 
 def get_conn():
     return psycopg2.connect(
-        dbname="scanner",
+        dbname="Scanner",
         user="postgres",
         password="kantero@09",
         host="localhost",
